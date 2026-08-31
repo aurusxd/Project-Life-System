@@ -15,7 +15,7 @@ Telegram Mini App, которое считает отжимания в реал�
 - TypeScript
 - `@mediapipe/tasks-vision` (Pose Landmarker, модель `pose_landmarker_lite`, WASM + GPU delegate)
 - Telegram WebApp JS SDK (`window.Telegram.WebApp`)
-- Хостинг: любой статический (Vercel/GitHub Pages), HTTPS обязателен для Telegram и для `getUserMedia`
+- Хостинг: любой статический (Vercel/GitHub Pages), HTTPS обязателен для Telegram и для `getUserMedia`; настройки деплоя на Vercel зафиксированы в `vercel.json` (framework null, output `build`, SPA-rewrite на `index.html`)
 - Тулинг качества: ESLint (`eslint`, `typescript-eslint`, `eslint-plugin-svelte`) + Prettier (`prettier-plugin-svelte`), тайпчек — `svelte-check`
 
 Бэкенд, БД, очереди, авторизация — не нужны. Вся история сессий хранится в `localStorage`.
