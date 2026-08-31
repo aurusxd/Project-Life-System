@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
+	import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 	import CameraView from '$lib/components/CameraView.svelte';
 	import {
 		CameraError,
@@ -11,31 +12,42 @@
 		type BlackFrameProbeResult,
 		type CameraStreamInfo
 	} from '$lib/camera/stream';
+	import { createPoseDetector, startDetectionLoop, type PoseDetector } from '$lib/pose/detector';
 	import {
 		describeEnvironment,
 		openInExternalBrowser,
 		type EnvironmentInfo
 	} from '$lib/telegram/webapp';
 
-	// Stage 1 screen: verifies the Telegram iOS WebView camera risk (tech.md section 6).
-	type CheckStatus = 'idle' | 'starting' | 'probing' | 'live' | 'black' | 'error';
+	// Stage 2 screen: camera check (tech.md section 6) followed by live pose detection.
+	type Status = 'idle' | 'starting' | 'probing' | 'loading' | 'running' | 'black' | 'error';
 
-	let status = $state<CheckStatus>('idle');
+	let status = $state<Status>('idle');
 	let stream = $state<MediaStream | null>(null);
 	let video = $state<HTMLVideoElement | null>(null);
 	let streamInfo = $state<CameraStreamInfo | null>(null);
 	let probe = $state<BlackFrameProbeResult | null>(null);
+	let landmarks = $state<NormalizedLandmark[] | null>(null);
+	let fps = $state(0);
+	let delegate = $state('');
+	let modelLoadMs = $state(0);
 	let errorMessage = $state('');
 	let copied = $state(false);
 
-	// Fixed for the lifetime of the page: describes the client the check runs in.
+	let detector: PoseDetector | null = null;
+	let stopLoop: (() => void) | null = null;
+
+	// Fixed for the lifetime of the page: describes the client the app runs in.
 	const environment: EnvironmentInfo = describeEnvironment();
 
-	const busy = $derived(status === 'starting' || status === 'probing');
+	const busy = $derived(status === 'starting' || status === 'probing' || status === 'loading');
 	const failed = $derived(status === 'black' || status === 'error');
+	const posePresent = $derived(landmarks !== null);
+
+	onDestroy(stop);
 
 	async function start(): Promise<void> {
-		reset();
+		stop();
 		status = 'starting';
 
 		try {
@@ -47,29 +59,52 @@
 			if (!video) throw new CameraError('unknown', 'Video element is not mounted.');
 
 			await waitForVideoFrame(video);
-			status = 'probing';
 
+			status = 'probing';
 			probe = await probeBlackFrames(video);
-			status = probe.isBlack ? 'black' : 'live';
+			if (probe.isBlack) {
+				status = 'black';
+				return;
+			}
+
+			status = 'loading';
+			const startedAt = performance.now();
+			detector = await createPoseDetector();
+			modelLoadMs = Math.round(performance.now() - startedAt);
+			delegate = detector.delegate;
+
+			stopLoop = startDetectionLoop(video, detector, (frame) => {
+				landmarks = frame.landmarks;
+				fps = frame.fps;
+			});
+			status = 'running';
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 			status = 'error';
-			stop();
+			teardown();
 		}
 	}
 
 	function stop(): void {
-		stopStream(stream);
-		stream = null;
-	}
-
-	function reset(): void {
-		stop();
+		teardown();
 		streamInfo = null;
 		probe = null;
 		errorMessage = '';
 		copied = false;
 		status = 'idle';
+	}
+
+	function teardown(): void {
+		stopLoop?.();
+		stopLoop = null;
+		detector?.close();
+		detector = null;
+		stopStream(stream);
+		stream = null;
+		landmarks = null;
+		fps = 0;
+		delegate = '';
+		modelLoadMs = 0;
 	}
 
 	function buildReport(): string {
@@ -79,26 +114,19 @@
 			`platform: ${environment.platform}`,
 			`tgVersion: ${environment.version}`,
 			`secureContext: ${environment.secureContext}`,
-			`mediaDevices: ${environment.mediaDevicesAvailable}`,
 			`userAgent: ${environment.userAgent}`
 		];
 
 		if (streamInfo) {
 			lines.push(
 				`stream: ${streamInfo.width}x${streamInfo.height} @${streamInfo.frameRate}fps`,
-				`facingMode: ${streamInfo.facingMode}`,
-				`track: ${streamInfo.label}`
+				`facingMode: ${streamInfo.facingMode}`
 			);
 		}
 
-		if (probe) {
-			lines.push(
-				`black: ${probe.isBlack}`,
-				`luma avg/max: ${probe.averageLuma}/${probe.maxLuma}`,
-				`samples: ${probe.samples.join(', ')}`
-			);
-		}
-
+		if (probe) lines.push(`black: ${probe.isBlack} (luma max ${probe.maxLuma})`);
+		if (delegate) lines.push(`delegate: ${delegate}`, `modelLoad: ${modelLoadMs}ms`);
+		if (status === 'running') lines.push(`detectFps: ${fps}`, `pose: ${posePresent}`);
 		if (errorMessage) lines.push(`error: ${errorMessage}`);
 
 		return lines.join('\n');
@@ -115,12 +143,13 @@
 </script>
 
 <main>
-	<h1>Camera check</h1>
+	<h1>Pose detection</h1>
 	<p class="subtitle">
-		Step 1: confirm the rear camera delivers a real picture inside the Telegram WebView.
+		Step 2: the model tracks the body in the camera stream. Lay the phone on the floor on its side
+		so the whole body fits in frame.
 	</p>
 
-	<CameraView {stream} bind:video />
+	<CameraView {stream} bind:video {landmarks} />
 
 	<div class="status" data-state={status}>
 		{#if status === 'idle'}
@@ -129,18 +158,20 @@
 			Requesting the camera…
 		{:else if status === 'probing'}
 			Checking the stream for black frames…
-		{:else if status === 'live'}
-			Camera works — the stream carries a picture.
+		{:else if status === 'loading'}
+			Loading the pose model…
+		{:else if status === 'running'}
+			{posePresent ? 'Body tracked' : 'No body in frame'} · {fps} fps · {delegate}
 		{:else if status === 'black'}
 			The stream is black. This is the known Telegram iOS WebView failure.
 		{:else}
-			Camera error: {errorMessage}
+			Error: {errorMessage}
 		{/if}
 	</div>
 
 	<div class="actions">
 		{#if stream}
-			<button onclick={reset}>Stop</button>
+			<button onclick={stop}>Stop</button>
 		{:else}
 			<button class="primary" onclick={start} disabled={busy}>Start camera</button>
 		{/if}
@@ -197,7 +228,7 @@
 		background: rgba(255, 255, 255, 0.06);
 	}
 
-	.status[data-state='live'] {
+	.status[data-state='running'] {
 		color: var(--ok);
 	}
 

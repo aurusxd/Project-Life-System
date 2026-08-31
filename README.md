@@ -14,10 +14,14 @@ npm run dev
 
 ## Current stage
 
-Stage 1 (skeleton): the app screen is the camera check that verifies the known
-Telegram iOS WebView risk — `getUserMedia` returning a black stream (tech.md section 6).
-It starts the rear camera, samples frames for brightness, prints diagnostics and offers
-an "Open in Safari" fallback when the stream is black or unavailable.
+Stage 2 (pose detection): the app starts the rear camera, verifies the stream is not black
+(the Telegram iOS WebView risk from tech.md section 6, which did not materialise), loads the
+Pose Landmarker model and draws the tracked skeleton over the video, reporting detection rate
+and the delegate in use.
+
+The WASM runtime is copied out of `node_modules` into `static/mediapipe/wasm` by
+`npm run copy:wasm` (wired into `dev` and `build`), and the model lives in
+`static/models`. Both are served from this origin, so no CDN request has to succeed.
 
 ## Deploying and testing in Telegram
 

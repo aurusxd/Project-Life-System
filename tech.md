@@ -13,7 +13,8 @@ Telegram Mini App, которое считает отжимания в реал�
 
 - SvelteKit, `adapter-static` (приложение полностью клиентское, бэкенд не нужен)
 - TypeScript
-- `@mediapipe/tasks-vision` (Pose Landmarker, модель `pose_landmarker_lite`, WASM + GPU delegate)
+- `@mediapipe/tasks-vision` (Pose Landmarker, модель `pose_landmarker_lite`, WASM + GPU delegate, при отказе GPU — автофолбэк на CPU)
+- WASM-рантайм и модель раздаются со своего origin, без CDN: одним внешним запросом меньше внутри Telegram WebView
 - Telegram WebApp JS SDK (`window.Telegram.WebApp`)
 - Хостинг: любой статический (Vercel/GitHub Pages), HTTPS обязателен для Telegram и для `getUserMedia`; настройки деплоя на Vercel зафиксированы в `vercel.json` (framework null, output `build`, SPA-rewrite на `index.html`)
 - Тулинг качества: ESLint (`eslint`, `typescript-eslint`, `eslint-plugin-svelte`) + Prettier (`prettier-plugin-svelte`), тайпчек — `svelte-check`
@@ -25,6 +26,8 @@ Telegram Mini App, которое считает отжимания в реал�
 - вся конфигурация SvelteKit живёт в `vite.config.ts` (опции передаются в `sveltekit({ ... })`); отдельный `svelte.config.js` не используется — при наличии опций в Vite-конфиге SvelteKit его игнорирует
 - режим SPA: `adapter-static` с `fallback: 'index.html'`, в `src/routes/+layout.ts` — `export const ssr = false` и `export const prerender = false` (единственный HTML-шелл выдаёт fallback)
 - скрипты: `npm run dev`, `npm run build`, `npm run check` (тайпчек), `npm run lint`, `npm run format`
+- `npm run copy:wasm` копирует WASM-рантайм MediaPipe из `node_modules` в `static/mediapipe/wasm`; вызывается автоматически из `dev` и `build`, сама папка в `.gitignore` (версия рантайма всегда совпадает с npm-пакетом)
+- деплой на Vercel настроен через `vercel.json`, а не через дашборд
 
 ## 3. Структура папок
 
@@ -51,7 +54,11 @@ src/
       SetupGuide.svelte      # инструкция по позиционированию телефона
 static/
   models/
-    pose_landmarker_lite.task
+    pose_landmarker_lite.task   # лежит в репозитории (~5.8 МБ)
+  mediapipe/
+    wasm/                       # gitignored, копируется из node_modules
+scripts/
+  copy-mediapipe-wasm.js
 ```
 
 ## 4. Логика подсчёта отжиманий
@@ -84,6 +91,10 @@ State machine (`repCounter.ts`):
 
 План проверки (день 1): минимальный SvelteKit-роут с `<video>` + `getUserMedia`, задеплоенный на HTTPS, открыть как Telegram Mini App на реальном iPhone. Если поток чёрный — фолбэк: кнопка «Открыть в Safari» (`Telegram.WebApp.openLink` с текущим URL), приложение работает вне WebView.
 
+**Результат проверки (2026-08-31): риск НЕ подтвердился.** Мини-апп, задеплоенный на Vercel, открыт в Telegram — камера запускается, поток живой, чёрного экрана нет. Проект идёт по основному пути, без выхода в Safari.
+
+Проверка чёрного кадра и кнопка «Открыть в Safari» остаются в коде: WebView обновляется, и регрессия должна быть видна сразу, а не выглядеть как «модель не видит тело».
+
 Детали реализации проверки:
 
 - экран проверки живёт на `/` в стадии 1 и показывает: видео с задней камеры, статус потока, диагностику (Telegram platform/version, `userAgent`, разрешение и `facingMode` реального трека)
@@ -111,9 +122,9 @@ State machine (`repCounter.ts`):
 
 ## 9. Стадии
 
-1. Skeleton: SvelteKit + adapter-static, деплой на HTTPS, регистрация мини-аппа в BotFather, проверка риска из п.6
-2. Интеграция Pose Landmarker: детект по видеопотоку, overlay скелета
-3. Логика подсчёта: `angles.ts` + `repCounter.ts`, ручная калибровка порогов
+1. ✅ Skeleton: SvelteKit + adapter-static, деплой на HTTPS, регистрация мини-аппа в BotFather, проверка риска из п.6
+2. ✅ Интеграция Pose Landmarker: детект по видеопотоку, overlay скелета
+3. Логика подсчёта: `angles.ts` + `repCounter.ts`, ручная калибровка порогов ← текущая
 4. UI: `SetupGuide`, `Counter`, старт/стоп, история сессий в `localStorage`
 5. Полировка: Telegram theme (`Telegram.WebApp.themeParams`), обработка ошибок камеры, деплой
 
