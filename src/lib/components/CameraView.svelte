@@ -8,9 +8,11 @@
 		video?: HTMLVideoElement | null;
 		/** Landmarks of the tracked pose, drawn as a skeleton over the video. */
 		landmarks?: NormalizedLandmark[] | null;
+		/** Mirrors the view, as expected of a front camera. */
+		mirrored?: boolean;
 	}
 
-	let { stream, video = $bindable(null), landmarks = null }: Props = $props();
+	let { stream, video = $bindable(null), landmarks = null, mirrored = false }: Props = $props();
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let drawingUtils: DrawingUtils | null = null;
@@ -59,7 +61,7 @@
 	}
 </script>
 
-<div class="camera-view">
+<div class="camera-view" class:mirrored>
 	<!-- muted + playsinline are required for autoplay on iOS. -->
 	<video bind:this={video} autoplay playsinline muted></video>
 	<canvas bind:this={canvas}></canvas>
@@ -90,6 +92,13 @@
 		position: absolute;
 		inset: 0;
 		pointer-events: none;
+	}
+
+	/* Video and overlay get the same flip, so the landmarks stay aligned with the
+	   picture; the placeholder text is left readable. */
+	.camera-view.mirrored video,
+	.camera-view.mirrored canvas {
+		transform: scaleX(-1);
 	}
 
 	.placeholder {

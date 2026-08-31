@@ -19,6 +19,10 @@ Stage 2 (pose detection): the app starts the rear camera, verifies the stream is
 Pose Landmarker model and draws the tracked skeleton over the video, reporting detection rate
 and the delegate in use.
 
+A front-camera toggle is available for checking that the skeleton lands on the body: the
+rear camera faces away from the screen, so the overlay cannot be judged while using it. The
+front view is mirrored, video and overlay together.
+
 The WASM runtime is copied out of `node_modules` into `static/mediapipe/wasm` by
 `npm run copy:wasm` (wired into `dev` and `build`), and the model lives in
 `static/models`. Both are served from this origin, so no CDN request has to succeed.

@@ -6,10 +6,11 @@
 		CameraError,
 		describeStream,
 		probeBlackFrames,
-		startRearCamera,
+		startCamera,
 		stopStream,
 		waitForVideoFrame,
 		type BlackFrameProbeResult,
+		type CameraFacing,
 		type CameraStreamInfo
 	} from '$lib/camera/stream';
 	import { createPoseDetector, startDetectionLoop, type PoseDetector } from '$lib/pose/detector';
@@ -23,6 +24,8 @@
 	type Status = 'idle' | 'starting' | 'probing' | 'loading' | 'running' | 'black' | 'error';
 
 	let status = $state<Status>('idle');
+	// The counter runs off the rear camera; the front one is for checking the overlay.
+	let facing = $state<CameraFacing>('environment');
 	let stream = $state<MediaStream | null>(null);
 	let video = $state<HTMLVideoElement | null>(null);
 	let streamInfo = $state<CameraStreamInfo | null>(null);
@@ -43,6 +46,7 @@
 	const busy = $derived(status === 'starting' || status === 'probing' || status === 'loading');
 	const failed = $derived(status === 'black' || status === 'error');
 	const posePresent = $derived(landmarks !== null);
+	const usingFrontCamera = $derived(facing === 'user');
 
 	onDestroy(stop);
 
@@ -51,7 +55,7 @@
 		status = 'starting';
 
 		try {
-			stream = await startRearCamera();
+			stream = await startCamera(facing);
 			streamInfo = describeStream(stream);
 
 			// Let CameraView attach the stream to the video element before sampling it.
@@ -78,6 +82,31 @@
 				fps = frame.fps;
 			});
 			status = 'running';
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : String(error);
+			status = 'error';
+			teardown();
+		}
+	}
+
+	/**
+	 * Swaps the camera without tearing the detector down: the loop simply sees no
+	 * new frames until the replacement stream is live.
+	 */
+	async function switchCamera(): Promise<void> {
+		facing = usingFrontCamera ? 'environment' : 'user';
+		if (status !== 'running') return;
+
+		try {
+			stopStream(stream);
+			stream = null;
+			landmarks = null;
+
+			stream = await startCamera(facing);
+			streamInfo = describeStream(stream);
+
+			await tick();
+			if (video) await waitForVideoFrame(video);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : String(error);
 			status = 'error';
@@ -117,6 +146,8 @@
 			`userAgent: ${environment.userAgent}`
 		];
 
+		lines.push(`camera: ${facing}`);
+
 		if (streamInfo) {
 			lines.push(
 				`stream: ${streamInfo.width}x${streamInfo.height} @${streamInfo.frameRate}fps`,
@@ -149,7 +180,7 @@
 		so the whole body fits in frame.
 	</p>
 
-	<CameraView {stream} bind:video {landmarks} />
+	<CameraView {stream} bind:video {landmarks} mirrored={usingFrontCamera} />
 
 	<div class="status" data-state={status}>
 		{#if status === 'idle'}
@@ -175,6 +206,10 @@
 		{:else}
 			<button class="primary" onclick={start} disabled={busy}>Start camera</button>
 		{/if}
+
+		<button onclick={switchCamera} disabled={busy}>
+			{usingFrontCamera ? 'Rear camera' : 'Front camera'}
+		</button>
 
 		{#if failed && environment.inTelegram}
 			<button onclick={() => openInExternalBrowser()}>Open in Safari</button>

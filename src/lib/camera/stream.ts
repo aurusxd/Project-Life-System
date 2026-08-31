@@ -12,6 +12,9 @@ export const PROBE_CANVAS_SIZE = 64;
 /** How long to wait for the first decodable video frame, ms. */
 export const VIDEO_READY_TIMEOUT_MS = 8000;
 
+/** Which physical camera to open. The counter uses the rear one; the front one is for checking the overlay. */
+export type CameraFacing = 'environment' | 'user';
+
 export type CameraErrorKind =
 	'unsupported' | 'permission-denied' | 'not-found' | 'timeout' | 'unknown';
 
@@ -40,18 +43,20 @@ export interface BlackFrameProbeResult {
 	samples: number[];
 }
 
-const VIDEO_CONSTRAINTS: MediaStreamConstraints = {
-	// `ideal` rather than `exact`: desktop machines used for development have no
-	// rear camera and would otherwise fail with OverconstrainedError.
-	video: {
-		facingMode: { ideal: 'environment' },
-		width: { ideal: 1280 },
-		height: { ideal: 720 }
-	},
-	audio: false
-};
+function buildConstraints(facing: CameraFacing): MediaStreamConstraints {
+	return {
+		// `ideal` rather than `exact`: desktop machines used for development have
+		// only one camera and would otherwise fail with OverconstrainedError.
+		video: {
+			facingMode: { ideal: facing },
+			width: { ideal: 1280 },
+			height: { ideal: 720 }
+		},
+		audio: false
+	};
+}
 
-export async function startRearCamera(): Promise<MediaStream> {
+export async function startCamera(facing: CameraFacing): Promise<MediaStream> {
 	if (!navigator.mediaDevices?.getUserMedia) {
 		throw new CameraError(
 			'unsupported',
@@ -60,7 +65,7 @@ export async function startRearCamera(): Promise<MediaStream> {
 	}
 
 	try {
-		return await navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS);
+		return await navigator.mediaDevices.getUserMedia(buildConstraints(facing));
 	} catch (error) {
 		throw new CameraError(classifyGetUserMediaError(error), describeError(error), { cause: error });
 	}
