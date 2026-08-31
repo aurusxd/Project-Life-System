@@ -24,3 +24,6 @@ vite.config.ts.timestamp-*
 
 # Tooling
 .claude
+
+# MediaPipe runtime, copied from node_modules by scripts/copy-mediapipe-wasm.js
+static/mediapipe
